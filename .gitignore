@@ -1,9 +1,4 @@
-# IntelliJ
-.idea/
-*.iml
-# Build
-/target/
-/out/
-# OS
-.DS_Store
-Thumbs.db
+bin/
+obj/
+.vs/
+*.user
