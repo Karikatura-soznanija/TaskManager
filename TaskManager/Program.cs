@@ -1,7 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using TaskManager.Date;
+using System;
+using TaskManager.Data;
+using TaskManager.Models;
 
 var builder = WebApplication.CreateBuilder(args);
+var conn = builder.Configuration.GetConnectionString("Default");
+Console.WriteLine($"[DEV CHECK] CS starts with: {conn[..Math.Min(conn.Length, 40)]}...");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
@@ -11,8 +15,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-var conn = builder.Configuration.GetConnectionString("Default");
-Console.WriteLine($"[DEV CHECK] CS starts with: {conn[..Math.Min(conn.Length, 40)]}...");
+
 
 var app = builder.Build();
 
@@ -47,6 +50,16 @@ app.MapGet("/weatherforecast", () =>
     return forecast;
 })
 .WithName("GetWeatherForecast");
+
+app.MapGet("/tasks", async (AppDbContext db) =>
+    await db.Tasks.OrderByDescending(t => t.Id).ToListAsync());
+
+app.MapPost("/tasks", async (TaskItem input, AppDbContext db) =>
+{
+    db.Tasks.Add(input);
+    await db.SaveChangesAsync();
+    return Results.Created($"/tasks/{input.Id}", input);
+});
 
 app.Run();
 
