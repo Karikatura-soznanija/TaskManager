@@ -1,3 +1,4 @@
+using AutoMapper;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+
+builder.Services.AddAutoMapper(typeof(Program));
+
 
 var summaries = new[]
 {
@@ -49,54 +53,35 @@ app.MapGet("/tasks", async (AppDbContext db) =>
 string[] allowed = ["todo", "in_progress", "done"];
 
 // GET /tasks?skip=0&take=20
-app.MapGet("/tasks/paged", async (int skip , int take , AppDbContext db , HttpContext ctx , CancellationToken ct) =>
+app.MapGet("/tasks/paged", async (int skip, int take, AppDbContext db, IMapper mapper, CancellationToken ct) =>
 {
-    var query = db.Tasks
-    .OrderByDescending(t => t.Id);
-    var total = await query.CountAsync(ct);
-
-    var items = await query
+    var tasks = await db.Tasks
+    .OrderByDescending(t => t.Id)
     .Skip(skip)
     .Take(take)
     .ToListAsync(ct);
 
-    // ќтдаЄм метаданные пагинации
-    ctx.Response.Headers.Append("X-Total-Count", total.ToString());
-    // (опционально) ссылки на страницы
-    // var baseUrl = $"{ctx.Request.Scheme}:
-    //{ctx.Request.Host}/tasks/paged";
-    // ctx.Response.Headers.Append("Link", $"<{baseUrl}?skip={skip+take}&take={take}>; rel=\"next\"");
-    return Results.Ok(items);
+    return Results.Ok(mapper.Map<List<TaskReadDto>>(tasks));
 });
 
 // POST /tasks  Ч создаЄт задачу
-app.MapPost("/tasks", async (TaskCreateDto input, AppDbContext db) =>
+app.MapPost("/tasks", async (TaskCreateDto input, AppDbContext db, IMapper mapper, CancellationToken ct) =>
 {
-    var status = string.IsNullOrWhiteSpace(input.Status) ? "todo" : input.Status.Trim();
-
     if (string.IsNullOrWhiteSpace(input.Title))
         return Results.BadRequest(new { error = "Title is required" });
 
-    
-    if (!allowed.Contains(status))
-        return Results.BadRequest(new { error = "Invalid status" });
-
-    var entity = new TaskItem { 
-            Title = input.Title.Trim(),
-            Status = status,
-            CreatedAt = DateTimeOffset.UtcNow
-    };
+    var entity = mapper.Map<TaskItem>(input);
 
     db.Tasks.Add(entity);
-    await db.SaveChangesAsync();
-    return Results.Created($"/tasks/{entity.Id}", entity);
+    await db.SaveChangesAsync(ct);
+    return Results.Created($"/tasks/{entity.Id}", mapper.Map<TaskReadDto>(entity));
 });
 
 //GET /tasks/{id}
-app.MapGet("/tasks/{id:int}", async(int id, AppDbContext db, CancellationToken ct) =>
+app.MapGet("/tasks/{id:int}", async(int id, AppDbContext db,IMapper mapper, CancellationToken ct) =>
 {
     var t = await db.Tasks.FindAsync([id],ct);
-    return t is null ? Results.NotFound() : Results.Ok(t);
+    return t is null ? Results.NotFound() : Results.Ok(mapper.Map<TaskReadDto>(t));
 });
 
 // PUT /tasks/{id}  Ч частичное обновление (Title/Status)
