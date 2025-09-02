@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.Reflection;
 using TaskManager.Data;
 using TaskManager.Models;
 
@@ -44,39 +45,51 @@ app.UseHttpsRedirection();
 app.MapGet("/tasks", async (AppDbContext db) =>
     await db.Tasks.OrderByDescending(t => t.Id).ToListAsync());
 
+//—писок статусов
 string[] allowed = ["todo", "in_progress", "done"];
 
 // GET /tasks?skip=0&take=20
-app.MapGet("/tasks/paged", async (int skip , int take , AppDbContext db, CancellationToken ct) =>
+app.MapGet("/tasks/paged", async (int skip , int take , AppDbContext db , HttpContext ctx , CancellationToken ct) =>
 {
-    var list = await db.Tasks
-    .OrderByDescending(t => t.Id)
+    var query = db.Tasks
+    .OrderByDescending(t => t.Id);
+    var total = await query.CountAsync(ct);
+
+    var items = await query
     .Skip(skip)
     .Take(take)
     .ToListAsync(ct);
 
-    return Results.Ok(list);
+    // ќтдаЄм метаданные пагинации
+    ctx.Response.Headers.Append("X-Total-Count", total.ToString());
+    // (опционально) ссылки на страницы
+    // var baseUrl = $"{ctx.Request.Scheme}:
+    //{ctx.Request.Host}/tasks/paged";
+    // ctx.Response.Headers.Append("Link", $"<{baseUrl}?skip={skip+take}&take={take}>; rel=\"next\"");
+    return Results.Ok(items);
 });
 
-//POST /tasks
-app.MapPost("/tasks", async (TaskItem input, AppDbContext db) =>
+// POST /tasks  Ч создаЄт задачу
+app.MapPost("/tasks", async (TaskCreateDto input, AppDbContext db) =>
 {
+    var status = string.IsNullOrWhiteSpace(input.Status) ? "todo" : input.Status.Trim();
+
     if (string.IsNullOrWhiteSpace(input.Title))
         return Results.BadRequest(new { error = "Title is required" });
 
-    if (!string.IsNullOrWhiteSpace(input.Status) && !allowed.Contains(input.Status))
+    
+    if (!allowed.Contains(status))
         return Results.BadRequest(new { error = "Invalid status" });
 
-    // «начени€ по умолчанию
-    input.Title = input.Title.Trim();
-    if (string.IsNullOrWhiteSpace(input.Status))
-        input.Status = "todo";
-    if (input.CreatedAt == default)
-        input.CreatedAt = DateTimeOffset.UtcNow;
+    var entity = new TaskItem { 
+            Title = input.Title.Trim(),
+            Status = status,
+            CreatedAt = DateTimeOffset.UtcNow
+    };
 
-    db.Tasks.Add(input);
+    db.Tasks.Add(entity);
     await db.SaveChangesAsync();
-    return Results.Created($"/tasks/{input.Id}", input);
+    return Results.Created($"/tasks/{entity.Id}", entity);
 });
 
 //GET /tasks/{id}
@@ -86,8 +99,8 @@ app.MapGet("/tasks/{id:int}", async(int id, AppDbContext db, CancellationToken c
     return t is null ? Results.NotFound() : Results.Ok(t);
 });
 
-//PUT /tasks/{id}
-app.MapPut("/tasks/{id:int}", async (int id, TaskItem input, AppDbContext db, CancellationToken ct) =>
+// PUT /tasks/{id}  Ч частичное обновление (Title/Status)
+app.MapPut("/tasks/{id:int}", async (int id, TaskUpdateDto input, AppDbContext db, CancellationToken ct) =>
 {
     var t = await db.Tasks.FindAsync([id], ct);
     if (t is null) return Results.NotFound();
@@ -96,7 +109,12 @@ app.MapPut("/tasks/{id:int}", async (int id, TaskItem input, AppDbContext db, Ca
         t.Title = input.Title.Trim();
 
     if (!string.IsNullOrWhiteSpace(input.Status))
-        t.Status = input.Status.Trim();
+    {
+        var st = input.Status.Trim();
+        if (!allowed.Contains(st))
+            return Results.BadRequest(new { error = "Invalid status" });
+        t.Status = st;
+    }
 
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
